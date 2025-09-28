@@ -1,0 +1,650 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>— Sistema: Integridad —</title>
+<style>
+  /* === Reset y base === */
+  :root{
+    --bg1:#030305;
+    --bg2:#071018;
+    --muted:#98a2a8;
+    --text:#d6dde2;
+    --accent:#8fa68f; /* apagado, nada neon */
+    --danger:#7b2b2b;
+  }
+  html,body{margin:0;font-family: "IBM Plex Mono", "Courier New", monospace;background:linear-gradient(180deg,var(--bg1),var(--bg2));color:var(--text);-webkit-font-smoothing:antialiased;min-height:100vh;scroll-behavior:auto}
+  .stage{min-height:100vh;display:flex;align-items:center;justify-content:center;z-index:0;padding:20px 0}
+  /* canvas ocupa todo */
+  canvas#bg { position:fixed; inset:0; width:100%; height:100%; z-index:0; display:block; pointer-events:none; }
+  /* scanlines y vignette para realismo CRT */
+  .scanlines{position:fixed;inset:0;pointer-events:none;z-index:2;background-image:linear-gradient(rgba(255,255,255,0.0016) 1px, transparent 1px);background-size:100% 3px;mix-blend-mode:overlay}
+  .vignette{position:fixed;inset:0;pointer-events:none;z-index:2;background:radial-gradient(ellipse at center, rgba(0,0,0,0) 45%, rgba(0,0,0,0.5) 100%)}
+  /* panel central (responsive) */
+  .panel{
+    position:relative;z-index:3;width:920px;max-width:94%;height:640px;max-height:92vh;
+    background:linear-gradient(180deg, rgba(10,12,13,0.78), rgba(6,8,9,0.56));
+    border-radius:10px;border:1px solid rgba(255,255,255,0.03);
+    box-shadow: 0 30px 80px rgba(0,0,0,0.75);display:flex;overflow:hidden;
+  }
+  .left{flex:1;padding:22px 18px;display:flex;flex-direction:column;gap:12px;border-right:1px solid rgba(255,255,255,0.02)}
+  .right{width:360px;padding:24px;display:flex;flex-direction:column;justify-content:flex-start;gap:12px}
+  h1{margin:0;font-size:18px;letter-spacing:0.6px}
+  .subtitle{color:var(--muted);font-size:13px}
+  /* consola/logs */
+  .console{flex:1;background:rgba(0,0,0,0.16);border-radius:8px;padding:12px;overflow:auto;box-shadow: inset 0 -20px 40px rgba(0,0,0,0.45)}
+  .logline{font-size:13px;line-height:1.38;font-family:inherit;color:var(--text);white-space:pre-wrap}
+  .statusbar{display:flex;align-items:center;justify-content:space-between;gap:8px}
+  .prog{height:12px;background:rgba(255,255,255,0.02);border-radius:999px;overflow:hidden;flex:1}
+  .prog > i{display:block;height:100%;width:0%;background:linear-gradient(90deg, rgba(120,120,110,0.9), rgba(150,150,130,0.9));transition:width .7s cubic-bezier(.2,.9,.2,1)}
+  .conn{font-size:13px;color:var(--muted)}
+  /* tipografía tipo consola parpadeante */
+  .consoleTitle{font-size:13px;color:var(--muted);margin-bottom:8px}
+  .typing{border-right:2px solid rgba(255,255,255,0.12);padding-right:6px;display:inline-block}
+  /* derecha: mensaje final y controles */
+  .finalBox{margin-top:6px;background:linear-gradient(180deg, rgba(8,10,9,0.44), rgba(4,4,4,0.2));padding:12px;border-radius:8px;border:1px solid rgba(255,255,255,0.02);display:none}
+  .finalBox.show{display:block}
+  .finalTitle{font-size:16px;color:var(--text)}
+  .finalSub{color:var(--muted);font-size:13px;margin-top:6px}
+  .controls{display:flex;gap:8px;align-items:center;margin-top:10px}
+  .btn{padding:10px 12px;border-radius:8px;border:0;background:rgba(255,255,255,0.04);color:var(--text);cursor:pointer;font-family:inherit}
+  label.small{font-size:13px;color:var(--muted);display:flex;gap:8px;align-items:center}
+  /* overlay de jumpscare/flash (pantalla completa) */
+  .flashOverlay{position:fixed;inset:0;z-index:9;background:rgba(255,255,255,0);pointer-events:none;transition:background .08s linear}
+  .flashOverlay.on{background:rgba(255,255,255,0.92)}
+  /* texto grande de alarma momentáneo - ROJO INTENSO */
+  .alarm{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);z-index:10;color:#ff1a1a;font-size:46px;font-weight:bold;letter-spacing:1px;opacity:0;pointer-events:none;text-shadow:0 0 20px rgba(255,26,26,0.8), 0 0 40px rgba(255,0,0,0.6), 0 20px 80px rgba(0,0,0,0.8);background:rgba(0,0,0,0.3);padding:20px 30px;border-radius:10px;border:2px solid #ff4444}
+  .alarm.show{opacity:1;transition:opacity .12s linear}
+  /* responsive */
+  @media(max-width:900px){
+    .panel{flex-direction:column;height:auto;max-height:none;min-height:auto;margin:10px 0}
+    .left{border-right:none;border-bottom:1px solid rgba(255,255,255,0.02)}
+    .right{width:100%}
+    .alarm{font-size:24px;padding:15px 20px}
+    .stage{padding:10px}
+    body{overflow-y:auto;-webkit-overflow-scrolling:touch}
+  }
+  
+  /* Fix para dispositivos táctiles - con sensación de "trabado" */
+  @media (hover: none) and (pointer: coarse) {
+    body{
+      overflow-y:auto !important;
+      -webkit-overflow-scrolling:auto; /* Quita el scroll suave para que se sienta más trabado */
+      height:auto !important;
+      overscroll-behavior-y:contain; /* Previene el bounce nativo */
+    }
+    .stage{
+      position:relative !important;
+      min-height:100vh;
+    }
+    /* Agregar resistencia visual al scroll */
+    .panel{
+      transition:transform 0.1s cubic-bezier(0.4, 0, 0.6, 1);
+    }
+  }
+  
+  /* Efecto de resistencia adicional para todos los dispositivos móviles */
+  @media(max-width:900px){
+    body{
+      -webkit-overflow-scrolling:auto !important; /* Scroll con más fricción */
+      overscroll-behavior:contain;
+    }
+  }
+</style>
+</head>
+<body>
+  <div class="stage">
+    <canvas id="bg"></canvas>
+    <div class="scanlines"></div>
+    <div class="vignette"></div>
+
+    <div class="panel" role="main" aria-live="polite">
+      <div class="left">
+        <div>
+          <div class="consoleTitle">— Módulo: extracción.random.sys</div>
+          <div class="console" id="console" aria-live="polite"></div>
+        </div>
+
+        <div class="statusbar">
+          <div class="conn">Conexión: <span id="conn">--</span></div>
+          <div class="prog" aria-hidden="true"><i id="progFill"></i></div>
+        </div>
+      </div>
+
+      <div class="right">
+        <h1>Integridad: <span id="integrity">OK</span></h1>
+        <div class="subtitle" id="subtitle">Escaneando dispositivo... espere.</div>
+
+        <div class="finalBox" id="finalBox" role="status" aria-live="assertive">
+          <div class="finalTitle" id="finalTitle">🎉 Era broma — Bienvenidos al 1er ciclo</div>
+          <div class="finalSub">No se tomó ni se almacenó nada. Consejo: evita escanear QR desconocidos.</div>
+        </div>
+
+        <div class="controls">
+          <button class="btn" id="restart">Reiniciar</button>
+          <button class="btn" id="revealFast">Revelar rápido</button>        </div>
+
+        <div style="margin-top:8px;font-size:12px;color:var(--muted)">Nota: Esta broma no recopila datos. Efecto visual y sonoro incluido para mayor realismo.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- overlay para parpadeo / flash -->
+  <div class="flashOverlay" id="flashOverlay" aria-hidden="true"></div>
+  <div class="alarm" id="alarmText">💀 SISTEMA COMPROMETIDO 💀</div>
+
+<script>
+/* ========= Canvas background: lluvia de bits realista (no neon) + ruido ========= */
+const canvas = document.getElementById('bg');
+const ctx = canvas.getContext('2d');
+let W, H, fontSize, cols, drops;
+
+function resizeCanvas(){
+  const panel = document.querySelector('.panel');
+  W = canvas.width = panel.clientWidth;
+  H = canvas.height = panel.clientHeight;
+  fontSize = Math.max(10, Math.floor(W / 120));
+  cols = Math.floor(W / fontSize) + 2;
+  drops = new Array(cols).fill(0).map(()=> Math.floor(Math.random()*H/fontSize));
+  ctx.font = `${fontSize}px monospace`;
+}
+window.addEventListener('resize', resizeCanvas);
+resizeCanvas();
+
+const noiseCanvas = document.createElement('canvas');
+const nctx = noiseCanvas.getContext('2d');
+function makeNoise(){
+  noiseCanvas.width = 128; noiseCanvas.height = 128;
+  const id = nctx.createImageData(128,128);
+  for(let i=0;i<id.data.length;i+=4){
+    const v = Math.floor(Math.random()*40);
+    id.data[i]=v; id.data[i+1]=v; id.data[i+2]=v; id.data[i+3]=20;
+  }
+  nctx.putImageData(id,0,0);
+}
+makeNoise();
+
+const chars = ['0','1',' '];
+
+function draw(){
+  // trail
+  ctx.fillStyle = 'rgba(1,2,1,0.06)'; ctx.fillRect(0,0,W,H);
+  // bits
+  for(let i=0;i<cols;i++){
+    const x = i * fontSize;
+    const y = drops[i]*fontSize;
+    const ch = chars[(Math.random()*chars.length)|0];
+    // desaturate green-grey
+    const g = 120 + Math.floor(Math.random()*25);
+    const r = 70 + Math.floor(Math.random()*20);
+    ctx.fillStyle = `rgba(${r},${g},${r},${0.85 - Math.random()*0.35})`;
+    ctx.fillText(ch, x, y);
+    if (y > H + 50 && Math.random() > 0.995) drops[i] = 0;
+    drops[i]++;
+  }
+  // overlay noise
+  ctx.globalAlpha = 0.06; ctx.drawImage(noiseCanvas,0,0,W,H); ctx.globalAlpha = 1;
+  requestAnimationFrame(draw);
+}
+requestAnimationFrame(draw);
+
+/* ========= Consola: typing + logs ========= */
+const consoleEl = document.getElementById('console');
+const subtitle = document.getElementById('subtitle');
+const progFill = document.getElementById('progFill');
+const connEl = document.getElementById('conn');
+const integrityEl = document.getElementById('integrity');
+const finalBox = document.getElementById('finalBox');
+const finalTitle = document.getElementById('finalTitle');
+const restartBtn = document.getElementById('restart');
+const revealFastBtn = document.getElementById('revealFast');
+
+const flashOverlay = document.getElementById('flashOverlay');
+const alarmText = document.getElementById('alarmText');
+
+let logLines = [];
+let step = 0;
+let typingTimer = null;
+let running = false;
+
+const messages = [
+  "Escaneando dispositivo...",
+  "Obteniendo identificadores (ID)...",
+  "Analizando configuraciones de red...",
+  "Extrayendo archivos (lista)...",
+  "Conectando a endpoint remoto...",
+  "Finalizando transferencia..."
+];
+
+const fakeFiles = [
+  "notas_finales.docx",
+  "respaldos/2024_backup.tar.gz",
+  "fotos/fam_2019.jpg",
+  "config/alarm.cfg",
+  "tokens/sshkey",
+  "lista_estudiantes.csv"
+];
+
+function pushLog(text, color){
+  const line = document.createElement('div');
+  line.className = 'logline';
+  if(color) line.style.color = color;
+  line.textContent = `[${new Date().toLocaleTimeString()}] ${text}`;
+  consoleEl.appendChild(line);
+  consoleEl.scrollTop = consoleEl.scrollHeight;
+}
+
+function flickerConnection(){
+  connEl.textContent = Math.random() > 0.4 ? 'OK' : 'LIMITED';
+  setTimeout(flickerConnection, 900 + Math.random()*1400);
+}
+flickerConnection();
+
+function startSequence(){
+  // reset
+  consoleEl.innerHTML = '';
+  finalBox.classList.remove('show');
+  progFill.style.width = '0%';
+  integrityEl.textContent = 'OK';
+  subtitle.textContent = 'Escaneando dispositivo... espere.';
+  step = 0;
+  running = true;
+  sequentialStep();
+}
+
+function sequentialStep(){
+  if(!running) return;
+  if(step < messages.length){
+    // type the message (simulate typing)
+    typeMessage(messages[step], () => {
+      // after message typed, emulate extraction of file(s)
+      pushLog(messages[step]);
+      // show some fake files extracted (1-2)
+      const filesToShow = Math.floor(1 + Math.random()*2);
+      for(let i=0;i<filesToShow;i++){
+        const f = fakeFiles[(Math.random()*fakeFiles.length)|0];
+        pushLog(`Extrayendo: ${f}`, '#c9d8c9');
+      }
+      const percent = Math.round(((step+1)/messages.length)*100);
+      progFill.style.width = percent + '%';
+      // small chance to show warning
+      if(Math.random() < 0.18 && step > 0){
+        pushLog('ATENCIÓN: latencia inusual detectada', '#d1a8a8');
+        integrityEl.textContent = 'WARN';
+      }
+      step++;
+      // next step after delay
+      setTimeout(sequentialStep, 700 + Math.random()*900);
+    });
+  } else {
+    // finish -> small delay then trigger scare + reveal
+    pushLog('Operación: transmisión completada.');
+    progFill.style.width = '100%';
+    setTimeout(()=> {
+      triggerScareThenReveal();
+    }, 700 + Math.random()*400);
+  }
+}
+
+/* typing effect for a single message */
+function typeMessage(msg, cb){
+  let i = 0;
+  subtitle.textContent = '';
+  const span = document.createElement('span');
+  span.className = 'typing';
+  subtitle.appendChild(span);
+  function tick(){
+    if(i < msg.length){
+      span.textContent += msg[i++];
+      // small typing audio MÁS FUERTE
+      playClick(0.04, 1000 + Math.random()*600); // VOLUMEN MÁS FUERTE: 0.015 → 0.04
+      setTimeout(tick, 28 + Math.random()*60);
+    } else {
+      // finish typing: remove caret after tiny pause
+      setTimeout(()=>{ span.classList.remove('typing'); cb && cb(); }, 220);
+    }
+  }
+  tick();
+}
+
+/* short click sound */
+const AudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+let audioInitialized = false;
+
+// Función para inicializar audio agresivamente
+function initAudio() {
+  if (AudioCtx.state === 'suspended') {
+    AudioCtx.resume();
+  }
+  audioInitialized = true;
+}
+
+// Activar audio con CUALQUIER interacción del usuario
+document.addEventListener('touchstart', initAudio);
+document.addEventListener('touchmove', initAudio);
+document.addEventListener('touchend', initAudio);
+document.addEventListener('click', initAudio);
+document.addEventListener('scroll', initAudio);
+document.addEventListener('mousemove', initAudio);
+document.addEventListener('keydown', initAudio);
+
+// Intentar activar audio cuando la página carga
+window.addEventListener('load', () => {
+  setTimeout(() => {
+    initAudio();
+    // Intentar reproducir un sonido silencioso para "despertar" el audio
+    try {
+      playClick(0.001, 20000); // Frecuencia muy alta y volumen muy bajo
+    } catch(e) {}
+  }, 500);
+});
+
+function playClick(vol=0.06, freq=1200){ // VOLUMEN MÁS FUERTE: 0.03 → 0.06
+  if(AudioCtx.state === 'suspended') {
+    AudioCtx.resume();
+  }
+  try{
+    const o = AudioCtx.createOscillator();
+    const g = AudioCtx.createGain();
+    o.type = 'square';
+    o.frequency.value = freq;
+    g.gain.value = vol;
+    o.connect(g); g.connect(AudioCtx.destination);
+    o.start();
+    g.gain.exponentialRampToValueAtTime(0.0001, AudioCtx.currentTime + 0.06);
+    setTimeout(()=> o.stop(), 80);
+  }catch(e){console.warn('Audio error:', e);}
+}
+
+/* ======= Scare sequence: flash + vibration + alarm text, then reveal friendly message ======= */
+function triggerScareThenReveal(){
+  // siempre hacer flash - sin opción de desactivar
+  flashSequence(() => { revealFriendly(); });
+  // vibrate if available (requires user gesture on some browsers)
+  try{ if(navigator.vibrate) navigator.vibrate([120,60,180,60,120]); }catch(e){}
+}
+
+function flashSequence(done){
+  // secuencia más larga e intensa para mayor impacto
+  flashOverlay.classList.add('on');
+  alarmText.classList.add('show');
+  // play a low-thump then a sharp beep + ALARMA FUERTE
+  playThumpAndBeep();
+  playAlarmSiren(); // NUEVA ALARMA SÚPER FUERTE
+  
+  // efecto de shake más intenso y largo
+  const mon = document.querySelector('.panel');
+  const anim = mon.animate([
+    { transform: 'translate(0,0)'},
+    { transform: 'translate(-8px,6px) rotate(-1deg)' },
+    { transform: 'translate(8px,-6px) rotate(1.2deg)' },
+    { transform: 'translate(-6px,4px) rotate(-0.8deg)' },
+    { transform: 'translate(6px,-4px) rotate(0.9deg)' },
+    { transform: 'translate(-4px,3px) rotate(-0.5deg)' },
+    { transform: 'translate(4px,-3px) rotate(0.6deg)' },
+    { transform: 'translate(0,0)'}
+  ], { duration: 800, iterations: 1, easing: 'cubic-bezier(.2,.6,.2,1)' });
+  
+  // Hacer que el texto parpadee durante más tiempo con efectos rojos
+  setTimeout(() => {
+    alarmText.style.opacity = '0.3';
+    alarmText.style.color = '#ff4444';
+  }, 300);
+  
+  setTimeout(() => {
+    alarmText.style.opacity = '1';
+    alarmText.style.color = '#ff0000';
+    alarmText.style.textShadow = '0 0 30px rgba(255,0,0,1), 0 0 60px rgba(255,26,26,0.8)';
+  }, 450);
+  
+  setTimeout(() => {
+    alarmText.style.opacity = '0.5';
+    alarmText.style.color = '#cc0000';
+  }, 600);
+  
+  setTimeout(() => {
+    alarmText.style.opacity = '1';
+    alarmText.style.color = '#ff1a1a';
+    alarmText.style.textShadow = '0 0 20px rgba(255,26,26,0.8), 0 0 40px rgba(255,0,0,0.6), 0 20px 80px rgba(0,0,0,0.8)';
+  }, 750);
+  
+  setTimeout(()=>{
+    // remover flash después de más tiempo
+    flashOverlay.classList.remove('on');
+    alarmText.classList.remove('show');
+    // reset todos los estilos del texto de alarma
+    alarmText.style.opacity = '';
+    alarmText.style.color = '';
+    alarmText.style.textShadow = '';
+    done && done();
+  }, 1200); // Aumentado de 650ms a 1200ms
+}
+
+function playThumpAndBeep(){
+  if(AudioCtx.state === 'suspended') {
+    AudioCtx.resume();
+  }
+  try{
+    const now = AudioCtx.currentTime;
+    // low thump EXTREMADAMENTE FUERTE
+    const o1 = AudioCtx.createOscillator(); const g1 = AudioCtx.createGain();
+    o1.type = 'sine'; o1.frequency.value = 60; g1.gain.value = 0.25; // MÁS FUERTE: 0.15 → 0.25
+    o1.connect(g1); g1.connect(AudioCtx.destination); o1.start(now);
+    g1.gain.exponentialRampToValueAtTime(0.0001, now + 0.15);
+    setTimeout(()=> o1.stop(), 180);
+    
+    // serie de beeps alarmantes EXTREMADAMENTE FUERTE
+    setTimeout(()=>{
+      const o2 = AudioCtx.createOscillator(); const g2 = AudioCtx.createGain();
+      o2.type = 'square'; o2.frequency.value = 1400; g2.gain.value = 0.2; // MÁS FUERTE: 0.12 → 0.2
+      o2.connect(g2); g2.connect(AudioCtx.destination); o2.start();
+      g2.gain.exponentialRampToValueAtTime(0.0001, AudioCtx.currentTime + 0.18);
+      setTimeout(()=> o2.stop(), 200);
+    }, 150);
+    
+    // beep adicional más agudo y EXTREMADAMENTE FUERTE
+    setTimeout(()=>{
+      const o3 = AudioCtx.createOscillator(); const g3 = AudioCtx.createGain();
+      o3.type = 'square'; o3.frequency.value = 1800; g3.gain.value = 0.18; // MÁS FUERTE: 0.1 → 0.18
+      o3.connect(g3); g3.connect(AudioCtx.destination); o3.start();
+      g3.gain.exponentialRampToValueAtTime(0.0001, AudioCtx.currentTime + 0.15);
+      setTimeout(()=> o3.stop(), 170);
+    }, 350);
+    
+    // beep final descendente EXTREMADAMENTE FUERTE
+    setTimeout(()=>{
+      const o4 = AudioCtx.createOscillator(); const g4 = AudioCtx.createGain();
+      o4.type = 'square'; o4.frequency.value = 1200; g4.gain.value = 0.15; // MÁS FUERTE: 0.08 → 0.15
+      o4.connect(g4); g4.connect(AudioCtx.destination); o4.start();
+      o4.frequency.exponentialRampToValueAtTime(400, AudioCtx.currentTime + 0.25);
+      g4.gain.exponentialRampToValueAtTime(0.0001, AudioCtx.currentTime + 0.25);
+      setTimeout(()=> o4.stop(), 280);
+    }, 500);
+  }catch(e){ console.warn('audio err', e); }
+}
+
+/* NUEVA FUNCIÓN: ALARMA DE SIRENA SÚPER FUERTE */
+function playAlarmSiren(){
+  if(AudioCtx.state === 'suspended') {
+    AudioCtx.resume();
+  }
+  try{
+    const now = AudioCtx.currentTime;
+    
+    // SIRENA TIPO ALARMA DE EMERGENCIA - MUY FUERTE
+    const createSirenTone = (startTime, duration, startFreq, endFreq, volume) => {
+      const osc = AudioCtx.createOscillator();
+      const gain = AudioCtx.createGain();
+      
+      osc.type = 'sawtooth'; // Sonido más áspero y alarmante
+      osc.frequency.setValueAtTime(startFreq, startTime);
+      osc.frequency.exponentialRampToValueAtTime(endFreq, startTime + duration);
+      
+      gain.gain.setValueAtTime(volume, startTime);
+      gain.gain.exponentialRampToValueAtTime(0.0001, startTime + duration);
+      
+      osc.connect(gain);
+      gain.connect(AudioCtx.destination);
+      osc.start(startTime);
+      setTimeout(() => osc.stop(), (duration + 0.1) * 1000);
+    };
+    
+    // Secuencia de sirena ascendente y descendente - SÚPER FUERTE
+    createSirenTone(now, 0.4, 300, 1200, 0.3); // Subida fuerte
+    createSirenTone(now + 0.4, 0.4, 1200, 300, 0.3); // Bajada fuerte
+    createSirenTone(now + 0.8, 0.3, 400, 1500, 0.25); // Subida más rápida
+    createSirenTone(now + 1.1, 0.3, 1500, 400, 0.25); // Bajada más rápida
+    
+    // BEEPS DE ALARMA ADICIONALES - EXTREMADAMENTE FUERTE
+    setTimeout(() => {
+      const alarm1 = AudioCtx.createOscillator(); const gain1 = AudioCtx.createGain();
+      alarm1.type = 'square'; alarm1.frequency.value = 2000; gain1.gain.value = 0.35; // VOLUMEN MÁXIMO
+      alarm1.connect(gain1); gain1.connect(AudioCtx.destination); alarm1.start();
+      gain1.gain.exponentialRampToValueAtTime(0.0001, AudioCtx.currentTime + 0.1);
+      setTimeout(() => alarm1.stop(), 120);
+    }, 200);
+    
+    setTimeout(() => {
+      const alarm2 = AudioCtx.createOscillator(); const gain2 = AudioCtx.createGain();
+      alarm2.type = 'square'; alarm2.frequency.value = 2000; gain2.gain.value = 0.35; // VOLUMEN MÁXIMO
+      alarm2.connect(gain2); gain2.connect(AudioCtx.destination); alarm2.start();
+      gain2.gain.exponentialRampToValueAtTime(0.0001, AudioCtx.currentTime + 0.1);
+      setTimeout(() => alarm2.stop(), 120);
+    }, 350);
+    
+    setTimeout(() => {
+      const alarm3 = AudioCtx.createOscillator(); const gain3 = AudioCtx.createGain();
+      alarm3.type = 'square'; alarm3.frequency.value = 2000; gain3.gain.value = 0.35; // VOLUMEN MÁXIMO
+      alarm3.connect(gain3); gain3.connect(AudioCtx.destination); alarm3.start();
+      gain3.gain.exponentialRampToValueAtTime(0.0001, AudioCtx.currentTime + 0.1);
+      setTimeout(() => alarm3.stop(), 120);
+    }, 500);
+    
+  }catch(e){ console.warn('alarm siren error:', e); }
+}
+
+/* reveal friendly message after scare */
+function revealFriendly(){
+  finalBox.classList.add('show');
+  pushLog('---- FIN: Era broma. Mensaje mostrado ----', '#a7d5a7');
+  subtitle.textContent = 'No se tomó ni se almacenó nada — relájense 😅';
+  // ensure prog to 100
+  progFill.style.width = '100%';
+}
+
+/* controls */
+restartBtn.addEventListener('click', ()=>{
+  running = false;
+  setTimeout(()=>{ startSequence(); }, 80);
+});
+revealFastBtn.addEventListener('click', ()=>{
+  if(!running){ startSequence(); return; }
+  running = false;
+  pushLog('Operación: FORZADA a final.');
+  progFill.style.width = '100%';
+  setTimeout(revealFriendly, 200);
+});
+
+
+
+/* start */
+startSequence();
+
+// Activación automática más agresiva del audio
+setTimeout(() => {
+  initAudio();
+  // Reproducir sonido de prueba muy silencioso
+  try {
+    playClick(0.002, 18000);
+  } catch(e) {}
+}, 1000);
+
+/* Efecto de scroll "trabado" pero funcional en móvil */
+let scrollResistance = false;
+let lastScrollTime = 0;
+let scrollVelocity = 0;
+
+function addScrollResistance(){
+  let isScrolling = false;
+  let scrollTimeout;
+  
+  window.addEventListener('scroll', () => {
+    // Activar audio con scroll
+    initAudio();
+    
+    const now = Date.now();
+    const timeDiff = now - lastScrollTime;
+    
+    if(timeDiff > 0){
+      scrollVelocity = Math.abs(window.scrollY - (window.lastScrollY || 0)) / timeDiff;
+    }
+    
+    lastScrollTime = now;
+    window.lastScrollY = window.scrollY;
+    
+    // Efecto visual de resistencia
+    if(!isScrolling){
+      document.body.style.transition = 'none';
+      isScrolling = true;
+    }
+    
+    // Clear timeout para detectar cuando para el scroll
+    clearTimeout(scrollTimeout);
+    scrollTimeout = setTimeout(() => {
+      isScrolling = false;
+      document.body.style.transition = '';
+    }, 150);
+    
+    // Vibración sutil en scroll rápido (solo en móvil)
+    if(scrollVelocity > 0.5 && 'vibrate' in navigator){
+      navigator.vibrate(1); // Vibración muy corta
+    }
+  }, { passive: true });
+  
+  // Efecto de "pegajoso" en touch
+  let touchStartY = 0;
+  let isDragging = false;
+  
+  document.addEventListener('touchstart', (e) => {
+    touchStartY = e.touches[0].clientY;
+    isDragging = true;
+    document.body.style.userSelect = 'none';
+  }, { passive: true });
+  
+  document.addEventListener('touchmove', (e) => {
+    if(!isDragging) return;
+    
+    const touchY = e.touches[0].clientY;
+    const deltaY = touchStartY - touchY;
+    
+    // Agregar resistencia visual muy sutil
+    if(Math.abs(deltaY) > 10){
+      const panel = document.querySelector('.panel');
+      const resistance = Math.min(Math.abs(deltaY) * 0.02, 3);
+      panel.style.transform = `translateY(${deltaY > 0 ? resistance : -resistance}px)`;
+    }
+  }, { passive: true });
+  
+  document.addEventListener('touchend', () => {
+    isDragging = false;
+    document.body.style.userSelect = '';
+    const panel = document.querySelector('.panel');
+    panel.style.transform = '';
+  }, { passive: true });
+}
+
+// Solo aplicar resistencia en dispositivos móviles
+if(/Android|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)){
+  addScrollResistance();
+}
+
+/* Accessibility: ESC reinicia, Space revela */
+window.addEventListener('keydown', e=>{
+  if(e.key === 'Escape'){ running = false; startSequence(); }
+  if(e.key === ' '){ e.preventDefault(); running = false; revealFriendly(); }
+});
+
+</script>
+</body>
+</html>
