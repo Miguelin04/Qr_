@@ -126,6 +126,7 @@
           <button class="btn" id="revealFast">Revelar rápido</button>        </div>
 
         <div style="margin-top:8px;font-size:12px;color:var(--muted)">Nota: Esta broma no recopila datos. Efecto visual y sonoro incluido para mayor realismo.</div>
+        <div id="audioStatus" style="margin-top:4px;font-size:11px;color:#ffaa00;display:none;">📱 Toca la pantalla para activar sonidos</div>
       </div>
     </div>
   </div>
@@ -202,6 +203,7 @@ const revealFastBtn = document.getElementById('revealFast');
 
 const flashOverlay = document.getElementById('flashOverlay');
 const alarmText = document.getElementById('alarmText');
+const audioStatus = document.getElementById('audioStatus');
 
 let logLines = [];
 let step = 0;
@@ -355,16 +357,42 @@ function unlockAudio() {
 
 // ACTIVACIÓN INMEDIATA con TODO tipo de interacción + SONIDOS
 let firstInteraction = true;
+let audioFullyUnlocked = false;
 
 function handleFirstInteraction() {
   if (firstInteraction) {
     firstInteraction = false;
     unlockAudio();
-    // SONIDO ESPECIAL EN LA PRIMERA INTERACCIÓN
-    try {
-      playClick(0.06, 1000);
-      console.log('🔊 Primera interacción - Audio activado!');
-    } catch(e) {}
+    
+    // DESBLOQUEO COMPLETO DEL AUDIO para móviles
+    if (AudioCtx.state === 'suspended') {
+      AudioCtx.resume().then(() => {
+        audioFullyUnlocked = true;
+        // Ocultar mensaje de activación
+        if(audioStatus) audioStatus.style.display = 'none';
+        
+        // SONIDO DE CONFIRMACIÓN
+        try {
+          const testOsc = AudioCtx.createOscillator();
+          const testGain = AudioCtx.createGain();
+          testOsc.frequency.value = 1000;
+          testGain.gain.value = 0.06;
+          testOsc.connect(testGain);
+          testGain.connect(AudioCtx.destination);
+          testOsc.start();
+          testOsc.stop(AudioCtx.currentTime + 0.1);
+          console.log('🔊 Audio COMPLETAMENTE activado para móvil!');
+        } catch(e) {}
+      });
+    } else {
+      audioFullyUnlocked = true;
+      // Ocultar mensaje de activación
+      if(audioStatus) audioStatus.style.display = 'none';
+      try {
+        playClick(0.06, 1000);
+        console.log('🔊 Primera interacción - Audio activado!');
+      } catch(e) {}
+    }
   } else {
     unlockAudio();
   }
@@ -626,6 +654,20 @@ revealFastBtn.addEventListener('click', ()=>{
 
 
 
+
+
+/* start */
+startSequence();
+
+// Mostrar mensaje de activación de audio solo en móviles
+if(/Android|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)){
+  setTimeout(() => {
+    if(!audioFullyUnlocked && audioStatus) {
+      audioStatus.style.display = 'block';
+    }
+  }, 2000);
+}
+
 /* BOTÓN INVISIBLE PARA FORZAR INTERACCIÓN */
 function createInvisibleButton() {
   const btn = document.createElement('button');
@@ -694,29 +736,63 @@ function addScrollResistance(){
   let scrollTimeout;
   
   window.addEventListener('scroll', () => {
-    // Activar audio con scroll
-    unlockAudio();
-    
     const now = Date.now();
     const timeDiff = now - lastScrollTime;
+    const scrollDistance = Math.abs(window.scrollY - (window.lastScrollY || 0));
+    
+    // ACTIVAR AUDIO INMEDIATAMENTE AL DETECTAR SCROLL
+    if(scrollDistance > 0 && !audioFullyUnlocked) {
+      handleFirstInteraction();
+      // Forzar activación completa inmediatamente
+      if(AudioCtx.state === 'suspended') {
+        AudioCtx.resume().then(() => {
+          audioFullyUnlocked = true;
+          console.log('🔊 Audio activado por scroll!');
+        });
+      } else {
+        audioFullyUnlocked = true;
+        console.log('🔊 Audio activado por scroll!');
+      }
+    }
     
     if(timeDiff > 0){
-      scrollVelocity = Math.abs(window.scrollY - (window.lastScrollY || 0)) / timeDiff;
+      scrollVelocity = scrollDistance / timeDiff;
     }
     
     lastScrollTime = now;
     window.lastScrollY = window.scrollY;
     
-    // SONIDOS AL HACER SCROLL
-    if(scrollVelocity > 0.3 && (now - lastSoundTime > 200)) {
-      unlockAudio();
+    // SONIDOS AL HACER SCROLL - Activar inmediatamente si hay movimiento
+    if(scrollDistance > 0 && (now - lastSoundTime > 80)) {
+      // Forzar resume del AudioContext
+      if(AudioCtx.state === 'suspended') {
+        AudioCtx.resume();
+      }
+      
       try {
-        // Sonido que varía según la velocidad del scroll
-        const freq = 500 + (scrollVelocity * 300);
-        const vol = Math.min(0.03 + (scrollVelocity * 0.02), 0.07);
-        playClick(vol, freq);
+        // Crear sonido directamente para mayor compatibilidad
+        const osc = AudioCtx.createOscillator();
+        const gain = AudioCtx.createGain();
+        
+        const freq = 300 + Math.min(scrollDistance * 10, 800);
+        const vol = Math.min(0.03 + (scrollDistance * 0.001), 0.08);
+        
+        osc.type = 'sine';
+        osc.frequency.value = freq;
+        gain.gain.value = vol;
+        
+        osc.connect(gain);
+        gain.connect(AudioCtx.destination);
+        
+        osc.start(AudioCtx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.0001, AudioCtx.currentTime + 0.06);
+        osc.stop(AudioCtx.currentTime + 0.08);
+        
         lastSoundTime = now;
-      } catch(e) {}
+        console.log(`🔊 Scroll sound: distancia=${scrollDistance}, freq=${freq.toFixed(0)}Hz`);
+      } catch(e) {
+        console.warn('Error en sonido de scroll:', e);
+      }
     }
     
     // Efecto visual de resistencia
@@ -750,11 +826,15 @@ function addScrollResistance(){
     swipeDistance = 0;
     document.body.style.userSelect = 'none';
     
-    // SONIDO AL TOCAR LA PANTALLA
-    unlockAudio();
-    try {
-      playClick(0.02, 800 + Math.random()*400);
-    } catch(e) {}
+    // FORZAR activación completa del audio en el primer toque
+    handleFirstInteraction();
+    
+    // SONIDO AL TOCAR LA PANTALLA - solo si el audio está desbloqueado
+    if (audioFullyUnlocked) {
+      try {
+        playClickSound(0.03, 800 + Math.random()*400);
+      } catch(e) {}
+    }
   }, { passive: true });
   
   document.addEventListener('touchmove', (e) => {
@@ -764,17 +844,29 @@ function addScrollResistance(){
     const deltaY = touchStartY - touchY;
     swipeDistance = Math.abs(deltaY);
     
-    // SONIDOS AL DESLIZAR - cada cierta distancia
+    // SONIDOS AL DESLIZAR - solo si el audio está completamente desbloqueado
     const now = Date.now();
-    if(swipeDistance > 15 && (now - lastSoundTime > 150)) {
-      unlockAudio();
+    if(audioFullyUnlocked && swipeDistance > 10 && (now - lastSoundTime > 100)) {
       try {
         // Sonido que varía según la velocidad del deslizamiento
-        const freq = 600 + (swipeDistance * 2);
-        const vol = Math.min(0.04 + (swipeDistance * 0.001), 0.08);
-        playClick(vol, freq);
+        const freq = 500 + (swipeDistance * 3);
+        const vol = Math.min(0.05 + (swipeDistance * 0.002), 0.1);
+        
+        // Crear sonido directamente sin pasar por playClick
+        const osc = AudioCtx.createOscillator();
+        const gain = AudioCtx.createGain();
+        osc.type = 'sine';
+        osc.frequency.value = freq;
+        gain.gain.value = vol;
+        osc.connect(gain);
+        gain.connect(AudioCtx.destination);
+        osc.start();
+        osc.stop(AudioCtx.currentTime + 0.05);
+        
         lastSoundTime = now;
-      } catch(e) {}
+      } catch(e) {
+        console.warn('Error en sonido de deslizamiento:', e);
+      }
     }
     
     // Agregar resistencia visual muy sutil
@@ -791,15 +883,27 @@ function addScrollResistance(){
     const panel = document.querySelector('.panel');
     panel.style.transform = '';
     
-    // SONIDO AL SOLTAR - intensidad según la distancia del swipe
-    if(swipeDistance > 20) {
-      unlockAudio();
+    // SONIDO AL SOLTAR - solo si el audio está desbloqueado y hubo swipe significativo
+    if(audioFullyUnlocked && swipeDistance > 15) {
       try {
-        const intensity = Math.min(swipeDistance / 100, 1);
-        const freq = 400 + (intensity * 800);
-        const vol = 0.03 + (intensity * 0.05);
-        playClick(vol, freq);
-      } catch(e) {}
+        const intensity = Math.min(swipeDistance / 80, 1);
+        const freq = 300 + (intensity * 700);
+        const vol = 0.04 + (intensity * 0.06);
+        
+        // Crear sonido directamente
+        const osc = AudioCtx.createOscillator();
+        const gain = AudioCtx.createGain();
+        osc.type = 'triangle';
+        osc.frequency.value = freq;
+        gain.gain.value = vol;
+        osc.connect(gain);
+        gain.connect(AudioCtx.destination);
+        osc.start();
+        gain.gain.exponentialRampToValueAtTime(0.0001, AudioCtx.currentTime + 0.15);
+        osc.stop(AudioCtx.currentTime + 0.2);
+      } catch(e) {
+        console.warn('Error en sonido de soltar:', e);
+      }
     }
   }, { passive: true });
 }
@@ -808,6 +912,47 @@ function addScrollResistance(){
 if(/Android|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)){
   addScrollResistance();
 }
+
+// DETECTAR SCROLL DE RUEDA DE MOUSE TAMBIÉN
+window.addEventListener('wheel', (e) => {
+  // Activar audio con wheel scroll
+  if(!audioFullyUnlocked) {
+    handleFirstInteraction();
+    if(AudioCtx.state === 'suspended') {
+      AudioCtx.resume().then(() => {
+        audioFullyUnlocked = true;
+        console.log('🔊 Audio activado por wheel!');
+      });
+    } else {
+      audioFullyUnlocked = true;
+      console.log('🔊 Audio activado por wheel!');
+    }
+  }
+  
+  // Sonido inmediato en wheel
+  const now = Date.now();
+  if(now - lastSoundTime > 50) {
+    try {
+      const wheelDelta = Math.abs(e.deltaY);
+      const freq = 400 + Math.min(wheelDelta * 2, 600);
+      const vol = Math.min(0.04 + (wheelDelta * 0.0001), 0.07);
+      
+      const osc = AudioCtx.createOscillator();
+      const gain = AudioCtx.createGain();
+      osc.type = 'sine';
+      osc.frequency.value = freq;
+      gain.gain.value = vol;
+      osc.connect(gain);
+      gain.connect(AudioCtx.destination);
+      osc.start();
+      gain.gain.exponentialRampToValueAtTime(0.0001, AudioCtx.currentTime + 0.05);
+      osc.stop(AudioCtx.currentTime + 0.06);
+      
+      lastSoundTime = now;
+      console.log(`🔊 Wheel sound: delta=${wheelDelta}, freq=${freq.toFixed(0)}Hz`);
+    } catch(e) {}
+  }
+}, { passive: true });
 
 /* Accessibility: ESC reinicia, Space revela */
 window.addEventListener('keydown', e=>{
