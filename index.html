@@ -294,10 +294,15 @@ function typeMessage(msg, cb){
   const span = document.createElement('span');
   span.className = 'typing';
   subtitle.appendChild(span);
+  
+  // ACTIVAR AUDIO INMEDIATAMENTE al empezar typing
+  unlockAudio();
+  
   function tick(){
     if(i < msg.length){
       span.textContent += msg[i++];
-      // small typing audio MÁS FUERTE
+      // small typing audio MÁS FUERTE con activación forzada
+      unlockAudio(); // Activar antes de cada sonido
       playClick(0.04, 1000 + Math.random()*600); // VOLUMEN MÁS FUERTE: 0.015 → 0.04
       setTimeout(tick, 28 + Math.random()*60);
     } else {
@@ -320,30 +325,85 @@ function initAudio() {
   audioInitialized = true;
 }
 
-// Activar audio con CUALQUIER interacción del usuario
-document.addEventListener('touchstart', initAudio);
-document.addEventListener('touchmove', initAudio);
-document.addEventListener('touchend', initAudio);
-document.addEventListener('click', initAudio);
-document.addEventListener('scroll', initAudio);
-document.addEventListener('mousemove', initAudio);
-document.addEventListener('keydown', initAudio);
+// ESTRATEGIA ULTRA AGRESIVA DE ACTIVACIÓN DE AUDIO
+let audioUnlocked = false;
 
-// Intentar activar audio cuando la página carga
-window.addEventListener('load', () => {
+function unlockAudio() {
+  if (audioUnlocked) return;
+  
+  if (AudioCtx.state === 'suspended') {
+    AudioCtx.resume();
+  }
+  
+  // Reproducir sonido ultra silencioso para desbloquear
+  try {
+    const testOsc = AudioCtx.createOscillator();
+    const testGain = AudioCtx.createGain();
+    testOsc.type = 'sine';
+    testOsc.frequency.value = 20000; // Frecuencia muy alta
+    testGain.gain.value = 0.001; // Volumen ultra bajo
+    testOsc.connect(testGain);
+    testGain.connect(AudioCtx.destination);
+    testOsc.start();
+    testOsc.stop(AudioCtx.currentTime + 0.01);
+    audioUnlocked = true;
+    console.log('🔊 Audio desbloqueado!');
+  } catch(e) {
+    console.warn('Error desbloqueando audio:', e);
+  }
+}
+
+// ACTIVACIÓN INMEDIATA con TODO tipo de interacción
+const events = ['touchstart', 'touchmove', 'touchend', 'click', 'mousedown', 'mousemove', 'scroll', 'keydown', 'resize', 'focus', 'visibilitychange'];
+events.forEach(event => {
+  document.addEventListener(event, unlockAudio, { once: false, passive: true });
+  window.addEventListener(event, unlockAudio, { once: false, passive: true });
+});
+
+// ACTIVACIÓN AUTOMÁTICA MÚLTIPLE
+window.addEventListener('DOMContentLoaded', () => {
+  unlockAudio();
+  // Primer intento inmediato
   setTimeout(() => {
-    initAudio();
-    // Intentar reproducir un sonido silencioso para "despertar" el audio
-    try {
-      playClick(0.001, 20000); // Frecuencia muy alta y volumen muy bajo
-    } catch(e) {}
+    unlockAudio();
+    try { playClick(0.005, 15000); } catch(e) {}
+  }, 100);
+  
+  // Segundo intento
+  setTimeout(() => {
+    unlockAudio();
+    try { playClick(0.01, 12000); } catch(e) {}
   }, 500);
+  
+  // Tercer intento
+  setTimeout(() => {
+    unlockAudio();
+    try { playClick(0.02, 10000); } catch(e) {}
+  }, 1000);
+});
+
+window.addEventListener('load', () => {
+  unlockAudio();
+  setTimeout(() => {
+    unlockAudio();
+    try { playClick(0.03, 8000); } catch(e) {}
+  }, 200);
 });
 
 function playClick(vol=0.06, freq=1200){ // VOLUMEN MÁS FUERTE: 0.03 → 0.06
+  // FORZAR activación de audio SIEMPRE
+  unlockAudio();
+  
   if(AudioCtx.state === 'suspended') {
-    AudioCtx.resume();
+    AudioCtx.resume().then(() => {
+      playClickSound(vol, freq);
+    });
+  } else {
+    playClickSound(vol, freq);
   }
+}
+
+function playClickSound(vol, freq) {
   try{
     const o = AudioCtx.createOscillator();
     const g = AudioCtx.createGain();
@@ -422,6 +482,7 @@ function flashSequence(done){
 }
 
 function playThumpAndBeep(){
+  unlockAudio(); // FORZAR activación antes de sonidos importantes
   if(AudioCtx.state === 'suspended') {
     AudioCtx.resume();
   }
@@ -466,6 +527,7 @@ function playThumpAndBeep(){
 
 /* NUEVA FUNCIÓN: ALARMA DE SIRENA SÚPER FUERTE */
 function playAlarmSiren(){
+  unlockAudio(); // FORZAR activación antes de la alarma
   if(AudioCtx.state === 'suspended') {
     AudioCtx.resume();
   }
@@ -548,16 +610,61 @@ revealFastBtn.addEventListener('click', ()=>{
 
 
 
+/* BOTÓN INVISIBLE PARA FORZAR INTERACCIÓN */
+function createInvisibleButton() {
+  const btn = document.createElement('button');
+  btn.style.position = 'fixed';
+  btn.style.top = '0';
+  btn.style.left = '0';
+  btn.style.width = '100%';
+  btn.style.height = '100%';
+  btn.style.opacity = '0';
+  btn.style.background = 'transparent';
+  btn.style.border = 'none';
+  btn.style.zIndex = '1000';
+  btn.style.cursor = 'default';
+  
+  btn.onclick = () => {
+    unlockAudio();
+    try {
+      playClick(0.01, 10000);
+      console.log('🔊 Audio activado por click invisible!');
+    } catch(e) {}
+    btn.remove(); // Remover después del primer click
+  };
+  
+  document.body.appendChild(btn);
+  
+  // Auto-click después de un momento
+  setTimeout(() => {
+    btn.click();
+  }, 100);
+  
+  // Remover si no se usó después de 3 segundos
+  setTimeout(() => {
+    if (btn.parentNode) btn.remove();
+  }, 3000);
+}
+
 /* start */
 startSequence();
 
-// Activación automática más agresiva del audio
+// ACTIVACIÓN ULTRA AGRESIVA DEL AUDIO
+createInvisibleButton(); // Crear botón invisible inmediatamente
+
 setTimeout(() => {
-  initAudio();
-  // Reproducir sonido de prueba muy silencioso
-  try {
-    playClick(0.002, 18000);
-  } catch(e) {}
+  unlockAudio();
+  try { playClick(0.005, 15000); } catch(e) {}
+}, 200);
+
+setTimeout(() => {
+  unlockAudio();
+  try { playClick(0.01, 12000); } catch(e) {}
+}, 500);
+
+setTimeout(() => {
+  unlockAudio();
+  try { playClick(0.015, 10000); } catch(e) {}
 }, 1000);
 
 /* Efecto de scroll "trabado" pero funcional en móvil */
@@ -571,7 +678,7 @@ function addScrollResistance(){
   
   window.addEventListener('scroll', () => {
     // Activar audio con scroll
-    initAudio();
+    unlockAudio();
     
     const now = Date.now();
     const timeDiff = now - lastScrollTime;
