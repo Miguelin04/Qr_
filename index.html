@@ -353,11 +353,27 @@ function unlockAudio() {
   }
 }
 
-// ACTIVACIÓN INMEDIATA con TODO tipo de interacción
+// ACTIVACIÓN INMEDIATA con TODO tipo de interacción + SONIDOS
+let firstInteraction = true;
+
+function handleFirstInteraction() {
+  if (firstInteraction) {
+    firstInteraction = false;
+    unlockAudio();
+    // SONIDO ESPECIAL EN LA PRIMERA INTERACCIÓN
+    try {
+      playClick(0.06, 1000);
+      console.log('🔊 Primera interacción - Audio activado!');
+    } catch(e) {}
+  } else {
+    unlockAudio();
+  }
+}
+
 const events = ['touchstart', 'touchmove', 'touchend', 'click', 'mousedown', 'mousemove', 'scroll', 'keydown', 'resize', 'focus', 'visibilitychange'];
 events.forEach(event => {
-  document.addEventListener(event, unlockAudio, { once: false, passive: true });
-  window.addEventListener(event, unlockAudio, { once: false, passive: true });
+  document.addEventListener(event, handleFirstInteraction, { once: false, passive: true });
+  window.addEventListener(event, handleFirstInteraction, { once: false, passive: true });
 });
 
 // ACTIVACIÓN AUTOMÁTICA MÚLTIPLE
@@ -670,6 +686,7 @@ setTimeout(() => {
 /* Efecto de scroll "trabado" pero funcional en móvil */
 let scrollResistance = false;
 let lastScrollTime = 0;
+let lastSoundTime = 0; // Para controlar la frecuencia de sonidos
 let scrollVelocity = 0;
 
 function addScrollResistance(){
@@ -690,6 +707,18 @@ function addScrollResistance(){
     lastScrollTime = now;
     window.lastScrollY = window.scrollY;
     
+    // SONIDOS AL HACER SCROLL
+    if(scrollVelocity > 0.3 && (now - lastSoundTime > 200)) {
+      unlockAudio();
+      try {
+        // Sonido que varía según la velocidad del scroll
+        const freq = 500 + (scrollVelocity * 300);
+        const vol = Math.min(0.03 + (scrollVelocity * 0.02), 0.07);
+        playClick(vol, freq);
+        lastSoundTime = now;
+      } catch(e) {}
+    }
+    
     // Efecto visual de resistencia
     if(!isScrolling){
       document.body.style.transition = 'none';
@@ -709,14 +738,23 @@ function addScrollResistance(){
     }
   }, { passive: true });
   
-  // Efecto de "pegajoso" en touch
+  // Efecto de "pegajoso" en touch + SONIDOS AL DESLIZAR
   let touchStartY = 0;
   let isDragging = false;
+  let lastSoundTime = 0;
+  let swipeDistance = 0;
   
   document.addEventListener('touchstart', (e) => {
     touchStartY = e.touches[0].clientY;
     isDragging = true;
+    swipeDistance = 0;
     document.body.style.userSelect = 'none';
+    
+    // SONIDO AL TOCAR LA PANTALLA
+    unlockAudio();
+    try {
+      playClick(0.02, 800 + Math.random()*400);
+    } catch(e) {}
   }, { passive: true });
   
   document.addEventListener('touchmove', (e) => {
@@ -724,6 +762,20 @@ function addScrollResistance(){
     
     const touchY = e.touches[0].clientY;
     const deltaY = touchStartY - touchY;
+    swipeDistance = Math.abs(deltaY);
+    
+    // SONIDOS AL DESLIZAR - cada cierta distancia
+    const now = Date.now();
+    if(swipeDistance > 15 && (now - lastSoundTime > 150)) {
+      unlockAudio();
+      try {
+        // Sonido que varía según la velocidad del deslizamiento
+        const freq = 600 + (swipeDistance * 2);
+        const vol = Math.min(0.04 + (swipeDistance * 0.001), 0.08);
+        playClick(vol, freq);
+        lastSoundTime = now;
+      } catch(e) {}
+    }
     
     // Agregar resistencia visual muy sutil
     if(Math.abs(deltaY) > 10){
@@ -738,6 +790,17 @@ function addScrollResistance(){
     document.body.style.userSelect = '';
     const panel = document.querySelector('.panel');
     panel.style.transform = '';
+    
+    // SONIDO AL SOLTAR - intensidad según la distancia del swipe
+    if(swipeDistance > 20) {
+      unlockAudio();
+      try {
+        const intensity = Math.min(swipeDistance / 100, 1);
+        const freq = 400 + (intensity * 800);
+        const vol = 0.03 + (intensity * 0.05);
+        playClick(vol, freq);
+      } catch(e) {}
+    }
   }, { passive: true });
 }
 
